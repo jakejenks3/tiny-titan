@@ -18,6 +18,15 @@
   };
 
   const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+  // Smoother on a phone: draw at most 2 screen pixels per page pixel. An iPhone
+  // has 3, so the game drew 2.25 times the pixels for no visible gain (pixel art)
+  // and scrolling stuttered. The engine reads this when it sizes its canvas.
+  if (touch && window.devicePixelRatio > 2) {
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', { get: function () { return 2; }, configurable: true });
+    } catch (e) { /* keeps the full size */ }
+  }
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const standalone = !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches));
   window.ttApp = {
