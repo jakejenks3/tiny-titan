@@ -33,6 +33,8 @@
     touch: touch,
     ios: ios,
     standalone: standalone,
+    // When this copy of the app was built (tools/build_web.py writes it into the page).
+    build: String(window.ttBuild || ''),
     hash: function () { return String(window.location.hash || ''); },
     href: function () { return String(window.location.href || ''); },
     vibrate: function (ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* not on iPhone */ } },
@@ -103,9 +105,17 @@
 
   // On the window, as the event bubbles up: after the game's own listener on the
   // canvas, so the field keeps the focus (still inside the finger's event).
+  let downAt = null;
+  window.addEventListener('touchstart', function (e) {
+    const t = e.changedTouches && e.changedTouches[0];
+    downAt = t ? [t.clientX, t.clientY] : null;
+  }, true);
   window.addEventListener('touchend', function (e) {
     if (!kb.active || !setup()) return;
     if (bar.contains(e.target)) return;
+    // A finger that moved was scrolling, not asking to type.
+    const t = e.changedTouches && e.changedTouches[0];
+    if (t && downAt && Math.hypot(t.clientX - downAt[0], t.clientY - downAt[1]) > 10) return;
     if (document.activeElement !== input) {
       input.focus();
       try { input.setSelectionRange(input.value.length, input.value.length); } catch (err) { /* number fields */ }
