@@ -162,7 +162,11 @@
   };
 
   window.ttFile = {
-    pick: function (accept, label, cb) {
+    // With maxSide, a picture is shrunk to that many pixels on its longer side and
+    // handed over as a JPEG: the browser turns a phone photo the right way up (the
+    // game's own reader would not) and a 12 megapixel photo does not have to cross
+    // into the game whole.
+    pick: function (accept, label, cb, maxSide) {
       actButton(label || 'Choose a file', function () {
         const f = document.createElement('input');
         f.type = 'file';
@@ -172,13 +176,36 @@
         f.addEventListener('change', function () {
           const file = f.files && f.files[0];
           if (!file) { cb('', ''); f.remove(); return; }
-          const r = new FileReader();
-          r.onload = function () {
-            const s = String(r.result || '');
-            cb(file.name, s.substring(s.indexOf(',') + 1));
-            f.remove();
+          const whole = function () {
+            const r = new FileReader();
+            r.onload = function () {
+              const s = String(r.result || '');
+              cb(file.name, s.substring(s.indexOf(',') + 1));
+              f.remove();
+            };
+            r.readAsDataURL(file);
           };
-          r.readAsDataURL(file);
+          if (!maxSide || !/^image\//.test(file.type || '')) { whole(); return; }
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = function () {
+            try {
+              const k = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+              const cv = document.createElement('canvas');
+              cv.width = Math.max(1, Math.round(img.naturalWidth * k));
+              cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+              cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+              const s = cv.toDataURL('image/jpeg', 0.9);
+              URL.revokeObjectURL(url);
+              cb(file.name.replace(/\.[^.]*$/, '') + '.jpg', s.substring(s.indexOf(',') + 1));
+              f.remove();
+            } catch (e) {
+              URL.revokeObjectURL(url);
+              whole();
+            }
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); whole(); };
+          img.src = url;
         });
         f.click();
       });
