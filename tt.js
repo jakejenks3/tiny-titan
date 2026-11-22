@@ -19,13 +19,47 @@
 
   const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-  // Smoother on a phone: draw at most 2 screen pixels per page pixel. An iPhone
-  // has 3, so the game drew 2.25 times the pixels for no visible gain (pixel art)
-  // and scrolling stuttered. The engine reads this when it sizes its canvas.
-  if (touch && window.devicePixelRatio > 2) {
+  // How many screen pixels the game draws per page pixel. An iPhone has 3: drawn
+  // in full the picture is sharpest (the default since the phone app was measured
+  // at 55 frames a second). "Sharper picture" off (Settings, Phone app) draws 2,
+  // which is 2.25 times fewer pixels, for a phone that scrolls smoother that way.
+  // The engine reads devicePixelRatio when it sizes its canvas, so the choice
+  // counts from the next time the page loads.
+  const realDpr = window.devicePixelRatio || 1;
+  let sharp = true;
+  try { sharp = window.localStorage.getItem('tt_sharp') !== '0'; } catch (e) { /* no storage: sharp */ }
+  const dprCap = sharp ? 3 : 2;
+  if (touch && realDpr > dprCap) {
     try {
-      Object.defineProperty(window, 'devicePixelRatio', { get: function () { return 2; }, configurable: true });
+      Object.defineProperty(window, 'devicePixelRatio', { get: function () { return dprCap; }, configurable: true });
     } catch (e) { /* keeps the full size */ }
+  }
+
+  // A short buzz. Android: navigator.vibrate. An iPhone has no vibrate(), but a
+  // switch-style checkbox ticks when it is toggled (iOS 17.4 and later), so a
+  // hidden one is clicked. n: 1 light, 2 two ticks, 3 three.
+  function buzz(n) {
+    n = Math.max(1, Math.min(3, n | 0));
+    try {
+      if (navigator.vibrate) {
+        navigator.vibrate(n === 1 ? 12 : (n === 2 ? [16, 50, 16] : [22, 50, 22, 50, 34]));
+        return;
+      }
+      const tick = function () {
+        const label = document.createElement('label');
+        label.setAttribute('aria-hidden', 'true');
+        label.style.display = 'none';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.setAttribute('switch', '');
+        label.appendChild(box);
+        document.head.appendChild(label);
+        label.click();
+        document.head.removeChild(label);
+      };
+      tick();
+      for (let i = 1; i < n; i++) setTimeout(tick, i * 110);
+    } catch (e) { /* no buzz */ }
   }
   // A finger is not a mouse. The engine takes its mouse position from the browser's
   // "pointermove", and a real finger sends those too (a made-up TouchEvent does not,
@@ -53,6 +87,15 @@
     hash: function () { return String(window.location.hash || ''); },
     href: function () { return String(window.location.href || ''); },
     vibrate: function (ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* not on iPhone */ } },
+    buzz: buzz,
+    // The screen's own pixels per page pixel, and whether the game draws them all.
+    dpr: realDpr,
+    sharp: sharp,
+    setSharp: function (on) {
+      try { window.localStorage.setItem('tt_sharp', on ? '1' : '0'); } catch (e) { /* no storage */ }
+      // A moment first: the game's last save is still on its way into the browser's storage.
+      setTimeout(function () { window.location.reload(); }, 900);
+    },
     // Keep the screen on while logging a workout (where the browser allows it).
     wake: function (on) {
       try {
