@@ -11,9 +11,23 @@
     const el = document.getElementById('tt-safe');
     const cs = el ? getComputedStyle(el) : null;
     const px = function (v) { return cs ? (parseFloat(cs.getPropertyValue(v)) || 0) : 0; };
+    let bottom = px('padding-bottom');
+    // An iPhone's Home Screen app (iOS 26.0 to 26.1, and again from 27; WebKit bug
+    // 301994): the page is given a height that is short of the screen by the
+    // status bar, and the system draws the band under it, where no page can
+    // reach. The home bar then lies in that band, not on the page, so the game
+    // need not leave room for it a second time.
+    const sw = (window.screen && window.screen.width) || 0;
+    const sh = (window.screen && window.screen.height) || 0;
+    let short = 0;
+    try {
+      const alone = !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches));
+      if (alone && window.innerHeight > window.innerWidth) short = Math.max(sw, sh) - window.innerHeight;
+    } catch (e) { short = 0; }
+    if (bottom > 0 && short >= bottom - 1) bottom = 0;
     return JSON.stringify({
-      top: px('padding-top'), right: px('padding-right'), bottom: px('padding-bottom'), left: px('padding-left'),
-      w: window.innerWidth, h: window.innerHeight,
+      top: px('padding-top'), right: px('padding-right'), bottom: bottom, left: px('padding-left'),
+      w: window.innerWidth, h: window.innerHeight, sw: sw, sh: sh, short: Math.max(0, short), bar: px('padding-bottom'),
     });
   };
 
