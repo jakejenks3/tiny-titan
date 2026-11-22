@@ -27,12 +27,27 @@
       Object.defineProperty(window, 'devicePixelRatio', { get: function () { return 2; }, configurable: true });
     } catch (e) { /* keeps the full size */ }
   }
+  // A finger is not a mouse. The engine takes its mouse position from the browser's
+  // "pointermove", and a real finger sends those too (a made-up TouchEvent does not,
+  // which is how this got past the tests): so the engine's mouse followed the finger,
+  // hovered whatever slid under it (a tooltip after every scroll, a highlight storm
+  // during one) and stayed parked where the finger lifted. Pointer events that are
+  // not a mouse's stop here, before the engine's listener (this script loads first).
+  ['pointermove', 'pointerdown', 'pointerup', 'pointercancel'].forEach(function (name) {
+    window.addEventListener(name, function (e) {
+      if (e.pointerType && e.pointerType !== 'mouse') e.stopImmediatePropagation();
+    }, true);
+  });
+  // Can the main pointer hover (a mouse)? A phone's cannot.
+  const noHover = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const standalone = !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches));
   window.ttApp = {
     touch: touch,
     ios: ios,
     standalone: standalone,
+    noHover: noHover,
     // When this copy of the app was built (tools/build_web.py writes it into the page).
     build: String(window.ttBuild || ''),
     hash: function () { return String(window.location.hash || ''); },
