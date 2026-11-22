@@ -67,11 +67,68 @@
   // hovered whatever slid under it (a tooltip after every scroll, a highlight storm
   // during one) and stayed parked where the finger lifted. Pointer events that are
   // not a mouse's stop here, before the engine's listener (this script loads first).
+  // The same listener counts fingers (see `fingers` below).
   ['pointermove', 'pointerdown', 'pointerup', 'pointercancel'].forEach(function (name) {
     window.addEventListener(name, function (e) {
-      if (e.pointerType && e.pointerType !== 'mouse') e.stopImmediatePropagation();
+      if (e.pointerType && e.pointerType !== 'mouse') {
+        if (name === 'pointerdown') { fingers.ids[e.pointerId] = 1; fingers.seen = true; }
+        if (name === 'pointerup' || name === 'pointercancel') { delete fingers.ids[e.pointerId]; fingers.upAt = Date.now(); }
+        e.stopImmediatePropagation();
+      }
     }, true);
   });
+
+  // How many fingers are on the screen, as far as the page can tell. The game
+  // follows one finger from its touchstart to its touchend; when a phone drops
+  // the touchend (its keyboard moving the page under a finger can do that) the
+  // game would hold a key down for ever. So the game asks here: `n` is what the
+  // last touch event said, and a finger whose pointer went up a while ago with
+  // no touch event since is taken as lifted.
+  const fingers = { n: 0, at: 0, ids: {}, seen: false, upAt: 0 };
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(function (name) {
+    window.addEventListener(name, function (e) {
+      fingers.n = e.touches ? e.touches.length : 0;
+      fingers.at = Date.now();
+    }, true);
+  });
+  const noFingers = function () { fingers.n = 0; fingers.ids = {}; };
+  window.addEventListener('blur', noFingers);
+  window.addEventListener('pagehide', noFingers);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) noFingers(); });
+  function fingerCount() {
+    if (fingers.n > 0 && fingers.seen && Object.keys(fingers.ids).length === 0 &&
+        fingers.upAt > fingers.at && Date.now() - fingers.upAt > 300) {
+      return 0;
+    }
+    return fingers.n;
+  }
+
+  // On a phone, typing goes through #tt-type (ttKb below). The engine has a
+  // hidden typing box of its own (div.ime): while one of the game's text boxes
+  // has the cursor it takes the page's focus ten times a second, which pulls
+  // the phone's keyboard away from the real field and pushes the page about.
+  // web/shell.html keeps it switched off for a page with this class.
+  if (touch) {
+    try { document.documentElement.classList.add('tt-touch'); } catch (e) { /* older browsers */ }
+  }
+
+  // Inside a finger's lift (or a click) a phone lets the page open its file
+  // chooser, the share sheet and the clipboard. The game makes a tap's click
+  // inside the lift (ui/touch_scroll.gd), so what a key asks for can open at once.
+  let gesture = false;
+  ['touchend', 'click'].forEach(function (name) {
+    window.addEventListener(name, function () {
+      gesture = true;
+      setTimeout(function () { gesture = false; }, 0);
+    }, true);
+  });
+  function live() {
+    if (!gesture) return false;
+    try {
+      if (navigator.userActivation && !navigator.userActivation.isActive) return false;
+    } catch (e) { /* no such thing here: the lift itself counts */ }
+    return true;
+  }
   // Can the main pointer hover (a mouse)? A phone's cannot.
   const noHover = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
 
@@ -88,6 +145,8 @@
     href: function () { return String(window.location.href || ''); },
     vibrate: function (ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* not on iPhone */ } },
     buzz: buzz,
+    // Fingers on the screen right now (see `fingers` above).
+    fingers: fingerCount,
     // The screen's own pixels per page pixel, and whether the game draws them all.
     dpr: realDpr,
     sharp: sharp,
@@ -111,12 +170,15 @@
 
   // --- typing on a phone ------------------------------------------------------------
   // The game's text boxes live inside the canvas, where a phone cannot type. When one
-  // gets the focus, the game calls want(): a real text field shows at the top of the
-  // screen. iOS only opens its keyboard when a field is focused inside the finger's own
-  // event, so the field is focused on the touchend of that same tap; if the tap was too
-  // quick for that, tapping the field opens it. What is typed goes back to the game as
-  // it is typed (onChange), and Done / return hands it in (onSubmit).
-  const kb = { active: false, onChange: null, onSubmit: null };
+  // is TAPPED, the game calls want(): a real text field shows at the top of the screen.
+  // iOS only opens its keyboard when a field is focused inside the finger's own event,
+  // so the field is focused on the touchend of that same tap (`fresh`), and of no other:
+  // a tap on a key or a photo while a box is active must not bring the keyboard up.
+  // What is typed goes back to the game as it is typed (onChange), Done / return hands
+  // it in (onSubmit), and the phone's own way of putting its keyboard away ends the
+  // typing too (onClose). A tap anywhere else in the game ends it from the game's side
+  // (release).
+  const kb = { active: false, fresh: false, onChange: null, onSubmit: null, onClose: null };
   window.ttKb = kb;
   let bar = null, input = null, done = null;
 
@@ -133,6 +195,28 @@
     // Keep the field focused while Done is pressed, then hand the text in.
     done.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     done.addEventListener('click', function (e) { e.preventDefault(); finish(); });
+    // The keyboard was put away by the phone (its own Done key, a swipe): typing is
+    // over. Not when the whole page lost the focus (another app in front).
+    input.addEventListener('blur', function () {
+      if (!kb.active) return;
+      setTimeout(function () {
+        if (!kb.active || document.activeElement === input || !document.hasFocus()) return;
+        const v = input.value;
+        kb.release();
+        if (kb.onClose) kb.onClose(v);
+      }, 150);
+    });
+    // The engine gives its canvas the focus on every touch, which would take it (and
+    // the keyboard) from the field: the keyboard went down and came back up with each
+    // touch of the screen. While typing, the canvas leaves the focus where it is.
+    const cv = document.getElementById('canvas');
+    if (cv && !cv.ttFocus) {
+      cv.ttFocus = cv.focus;
+      cv.focus = function () {
+        if (kb.active && document.activeElement === input) return undefined;
+        return cv.ttFocus.apply(cv, arguments);
+      };
+    }
     return true;
   }
 
@@ -143,20 +227,32 @@
     if (kb.onSubmit) kb.onSubmit(v);
   }
 
-  kb.want = function (text, kind, hint) {
+  // keep: the box was rebuilt under the typing (not a new tap): carry on as it is.
+  kb.want = function (text, kind, hint, keep) {
     if (!setup()) return;
-    kb.active = true;
-    input.value = String(text || '');
+    const t = String(text || '');
+    if (input.value !== t) input.value = t;
     input.placeholder = String(hint || 'Type here');
-    input.inputMode = kind === 'number' ? 'decimal' : 'text';
+    const mode = kind === 'number' ? 'decimal' : 'text';
+    if (input.inputMode !== mode) input.inputMode = mode;
+    kb.active = true;
+    if (!keep) kb.fresh = true;
     bar.classList.add('on');
   };
 
+  // A finger landed on the box that is being typed in: its lift opens the keyboard
+  // again if the phone had put it away.
+  kb.arm = function () { if (kb.active) kb.fresh = true; };
+
   kb.release = function () {
     if (!setup()) return;
+    const was = kb.active;
     kb.active = false;
+    kb.fresh = false;
     bar.classList.remove('on');
     if (document.activeElement === input) input.blur();
+    // An iPhone can leave the page pushed up after its keyboard has gone.
+    if (was) { try { window.scrollTo(0, 0); } catch (e) { /* stays */ } }
   };
 
   kb.focused = function () { return !!input && document.activeElement === input; };
@@ -171,6 +267,10 @@
   window.addEventListener('touchend', function (e) {
     if (!kb.active || !setup()) return;
     if (bar.contains(e.target)) return;
+    // Only the lift of the tap that asked for it opens the keyboard.
+    const fresh = kb.fresh;
+    kb.fresh = false;
+    if (!fresh) return;
     // A finger that moved was scrolling, not asking to type.
     const t = e.changedTouches && e.changedTouches[0];
     if (t && downAt && Math.hypot(t.clientX - downAt[0], t.clientY - downAt[1]) > 10) return;
@@ -186,16 +286,32 @@
   // real button (#tt-act) shows at the bottom of the screen for the player to tap.
   //   pick(accept, label, cb): cb(name, base64) once a file is read ('' if none)
   //   save(name, mime, base64, label): the share sheet (iPhone) or a download
-  function actButton(label, run) {
+  // When the game asks inside a tap (live()), the thing opens at once and no button
+  // is needed. For a file chooser the page cannot tell whether the phone opened it,
+  // so the button shows as well (`soft`: it does not run by itself when the page has
+  // no such bar). The button goes when the chooser answers, and with the next touch
+  // of the game: the player has moved on.
+  let actSoft = false;
+  function actHide() {
+    const bar = document.getElementById('tt-act');
+    if (bar) bar.classList.remove('on');
+    actSoft = false;
+  }
+  function actButton(label, run, soft) {
     const bar = document.getElementById('tt-act');
     const btn = document.getElementById('tt-act-go');
     const no = document.getElementById('tt-act-no');
-    if (!bar || !btn || !no) { run(); return; }
+    if (!bar || !btn || !no) { if (!soft) run(); return; }
     btn.textContent = label;
     bar.classList.add('on');
-    btn.onclick = function () { bar.classList.remove('on'); run(); };
-    no.onclick = function () { bar.classList.remove('on'); };
+    actSoft = !!soft;
+    btn.onclick = function () { actHide(); run(); };
+    no.onclick = actHide;
   }
+  window.addEventListener('touchstart', function (e) {
+    const bar = document.getElementById('tt-act');
+    if (bar && bar.classList.contains('on') && !bar.contains(e.target)) actHide();
+  }, true);
 
   function download(name, blob) {
     const a = document.createElement('a');
@@ -209,14 +325,21 @@
   // copy(text, label): text to the clipboard, from a real button (a phone only
   // lets a page write the clipboard inside a tap).
   window.ttCopy = function (text, label) {
-    actButton(label || 'Copy', function () {
-      const done = function () {};
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(String(text)).then(done, function () { window.prompt('Copy this:', String(text)); });
-      } else {
-        window.prompt('Copy this:', String(text));
-      }
-    });
+    const ask = function () {
+      actButton(label || 'Copy', function () {
+        const done = function () {};
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(String(text)).then(done, function () { window.prompt('Copy this:', String(text)); });
+        } else {
+          window.prompt('Copy this:', String(text));
+        }
+      });
+    };
+    if (live() && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(String(text)).then(function () {}, ask);
+      return;
+    }
+    ask();
   };
 
   window.ttFile = {
@@ -225,13 +348,15 @@
     // game's own reader would not) and a 12 megapixel photo does not have to cross
     // into the game whole.
     pick: function (accept, label, cb, maxSide) {
-      actButton(label || 'Choose a file', function () {
+      const open = function () {
         const f = document.createElement('input');
         f.type = 'file';
         f.accept = accept || '';
         f.style.display = 'none';
         document.body.appendChild(f);
+        f.addEventListener('cancel', function () { actHide(); f.remove(); });
         f.addEventListener('change', function () {
+          actHide();
           const file = f.files && f.files[0];
           if (!file) { cb('', ''); f.remove(); return; }
           const whole = function () {
@@ -266,7 +391,14 @@
           img.src = url;
         });
         f.click();
-      });
+      };
+      if (live()) {
+        // Inside the tap: the chooser opens now; the button is only a second way in.
+        open();
+        actButton(label || 'Choose a file', open, true);
+        return;
+      }
+      actButton(label || 'Choose a file', open);
     },
     // cb (optional) is called once the player has tapped the button.
     save: function (name, mime, b64, label, cb) {
@@ -274,17 +406,30 @@
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       const blob = new Blob([bytes], { type: mime });
-      actButton(label || 'Save it', function () {
-        if (cb) cb();
-        const file = (typeof File === 'function') ? new File([blob], name, { type: mime }) : null;
-        if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-          navigator.share({ files: [file] }).catch(function (e) {
-            if (!e || e.name !== 'AbortError') download(name, blob);
-          });
-          return;
-        }
-        download(name, blob);
-      });
+      const file = (typeof File === 'function') ? new File([blob], name, { type: mime }) : null;
+      const canShare = !!(file && navigator.canShare && navigator.canShare({ files: [file] }));
+      const ask = function () {
+        actButton(label || 'Save it', function () {
+          if (cb) cb();
+          if (canShare) {
+            navigator.share({ files: [file] }).catch(function (e) {
+              if (!e || e.name !== 'AbortError') download(name, blob);
+            });
+            return;
+          }
+          download(name, blob);
+        });
+      };
+      if (live() && canShare) {
+        // Inside the tap: the share sheet opens now. If the phone will not have it
+        // from here, the button asks instead.
+        navigator.share({ files: [file] }).then(function () { if (cb) cb(); }, function (e) {
+          if (e && e.name === 'AbortError') { if (cb) cb(); return; }
+          ask();
+        });
+        return;
+      }
+      ask();
     },
   };
 
