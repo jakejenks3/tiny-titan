@@ -338,19 +338,20 @@
 
   // copy(text, label): text to the clipboard, from a real button (a phone only
   // lets a page write the clipboard inside a tap).
-  window.ttCopy = function (text, label) {
+  // `done` (optional) is called once the text really is on the clipboard.
+  window.ttCopy = function (text, label, done) {
+    const ok = function () { if (done) done(); };
     const ask = function () {
       actButton(label || 'Copy', function () {
-        const done = function () {};
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(String(text)).then(done, function () { window.prompt('Copy this:', String(text)); });
+          navigator.clipboard.writeText(String(text)).then(ok, function () { window.prompt('Copy this:', String(text)); });
         } else {
           window.prompt('Copy this:', String(text));
         }
       });
     };
     if (live() && navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(String(text)).then(function () {}, ask);
+      navigator.clipboard.writeText(String(text)).then(ok, ask);
       return;
     }
     ask();
