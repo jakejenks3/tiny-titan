@@ -1,12 +1,14 @@
 // Tiny Titan's service worker (written by tools/build_web.py): keeps this build's
 // files so the app opens without a connection. A new build comes with a new BUILD:
 // it is fetched in the background and used from the next time the app is opened.
-const BUILD = '20261127-041615-7b719786';
+const BUILD = '20261127-054310-a15bb746';
 const CACHE = 'tiny-titan-' + BUILD;
 const FILES = ["./", "index.html", "index.js", "index.wasm", "index.pck", "index.audio.worklet.js", "index.audio.position.worklet.js", "tt.js", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // Every file is asked of the SITE, never of the browser's own short-lived copy: two builds
+  // published minutes apart would otherwise leave the newer worker holding the older build's files.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
