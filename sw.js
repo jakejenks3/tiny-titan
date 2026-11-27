@@ -1,7 +1,7 @@
 // Tiny Titan's service worker (written by tools/build_web.py): keeps this build's
 // files so the app opens without a connection. A new build comes with a new BUILD:
 // it is fetched in the background and used from the next time the app is opened.
-const BUILD = '20261126-224856-a27087e8';
+const BUILD = '20261126-230252-a3a7b916';
 const CACHE = 'tiny-titan-' + BUILD;
 const FILES = ["./", "index.html", "index.js", "index.wasm", "index.pck", "index.audio.worklet.js", "index.audio.position.worklet.js", "tt.js", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
 
